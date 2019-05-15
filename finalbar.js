@@ -3,25 +3,12 @@ var figlet = require( "figlet" );
 const readline = require( "readline" );
 const SerialPort = require('serialport');
 const dat = require('./dat');
+const HID = require('node-hid');
 
-const rl = readline.createInterface(
-{
-  completer: completer_user,
-  input: process.stdin,
-  output: process.stdout
+const rl = readline.createInterface( { input: process.stdin, output: process.stdout } );
 
-} );
-
-/*
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  //completer: completer,
-  historySize: 1,
-  removeHistoryDuplicates: true,
-  //prompt: "C:\\WINDOWS\\SYSTEM> "
-});
-*/
+// Connect to a USB barcode scanner with `xinput disable <id>` so it doesn't send text to stdin
+const hid = new HID.HID( 5050, 24 );
 
 function completer_product( line, callback )
 {
@@ -77,8 +64,6 @@ var log = [];
 
 var temp = [];
 
-var device;
-
 var	total=0;
 var	cash=0;
 var	depo=0;
@@ -89,18 +74,6 @@ var	scan="";
 var	depo=0;
 var	restart=0;
 var	endcash=0;
-
-var scandata = "";
-if ( false )
-{
-	device = new SerialPort.parsers.Readline( { delimiter: '\r\n' } );
-	serialPort.pipe( device );
-	device.on( 'data', d => scandata = d );
-}
-else
-{
-	device = null;
-}
 
 async function menu()
 {
@@ -168,7 +141,7 @@ async function menu()
 		}
 	}
 	temp.length = 0;
-	await sleep( 30 );
+	await sleep( 3 );
 	return 0;
 }
 
@@ -176,22 +149,28 @@ async function scanuser()
 {
 	print( "Scan your barcode or KEYBOARD to login manually.\n" );
 
+    /*
     var dummy = new Promise(function(resolve, reject)
     {
         setTimeout(resolve, 5000, 'quit');
     });
-    scan = await Promise.race( [ dummy, keyboard_out() ] );
-    /*
-	if ( device )
+    */
+	if ( hid )
 	{
-		scan = await scanner();
+		//scan = await scanner();
+        scan = await Promise.race( [ scanner(), keyboard_out() ] );
+
+        // Break the loop
+        hid.removeAllListeners("data");
+
+        //rl.pause();
+        //rl.close();
 	}
 	else
 	{
 		print( "Scanner not found, use keyboard!\n" );
 		scan = await keyboard_out();
 	}
-    */
 
 	if ( !scan.match( /^[A-Za-z0-9_\-]+$/ ) )
 	{
@@ -204,6 +183,7 @@ async function scanuser()
 	{
 		case "QUIT":
 			cleanup();
+            rl.close();
 			process.exit( 0 );
 
 		case "CHECKOUT":
@@ -328,9 +308,16 @@ async function registeruser()
 
 async function scanproduct()
 {
-	if ( device )
+	if ( hid )
 	{
-		scan = await scanner();
+		//scan = await scanner();
+        scan = await Promise.race( [ scanner(), keyboard_product_out() ] );
+
+        // Break the loop
+        hid.removeAllListeners("data");
+
+        //rl.pause();
+        //rl.close();
 	}
 	else
 	{
@@ -364,6 +351,7 @@ async function scanproduct()
 			print( "QUIT\n" );
 			cleanup();
 			temp.length = 0;
+            rl.close();
 			process.exit( 0 );
 	}
 
@@ -435,20 +423,22 @@ function cleanup()
 
 async function scanner( )
 {
-	/*
-	if [[ $input =~ ^[0-9a-zA-Z_-]*$ ]]
-	then
-		echo -n $input
-	else
-		echo -n !
-	fi
-	*/
+    var keys = [];
 
-	while ( !scandata )
-		await sleep( 0.1 );
-	var data = scandata;
-	scandata = "";
-	return data;
+    hid.setNonBlocking( 1 );
+    hid.on( "data", function( d )
+    {
+        if ( d.length )
+        {
+            keys.push( parseCharCodes( d[2], parseModifiers( d[ 0 ] ) ) );
+        }
+    } );
+
+    while ( !keys.length && keys[ keys.length - 1 ] !== "\n" && hid.listenerCount("data") )
+        await sleep( 0.1 );
+
+    await sleep( 0.1 );
+    return keys.join("").replace( "\n", "" );
 }
 
 async function keyboard_out( )
@@ -461,12 +451,23 @@ async function keyboard_out( )
 		echo -n !
 	fi
 	*/
+
+/*
 	return new Promise( (resolve, reject) => rl.question( '.', (answer) => {
 		if ( !answer.match( /^[A-Za-z0-9_\-]+$/ ) )
 			resolve( "!" );
 		else
 			resolve( answer );
 	} ) );
+*/
+
+    return new Promise( resolve => { rl.once( 'line', function( answer )
+    {
+		if ( !answer.match( /^[A-Za-z0-9_\-]+$/ ) )
+			resolve( "!" );
+		else
+			resolve( answer );
+    } ) } );
 }
 
 
@@ -480,12 +481,22 @@ async function keyboard_product_out( )
 		echo -n !
 	fi
 	*/
+    /*
 	return new Promise( (resolve, reject) => rl.question( '.', (answer) => {
 		if ( !answer.match( /^[A-Za-z0-9_\- ]+$/ ) )
 			resolve( "!" );
 		else
 			resolve( answer );
 	} ) );
+    */
+    return new Promise( resolve => { rl.once( 'line', function( answer )
+    {
+		if ( !answer.match( /^[A-Za-z0-9_\- ]+$/ ) )
+			resolve( "!" );
+		else
+			resolve( answer );
+    } ) } );
+
 }
 
 async function yesno_out( )
@@ -498,12 +509,23 @@ async function yesno_out( )
 		echo -n n
 	fi
 	*/
+    /*
 	return new Promise( (resolve, reject) => rl.question( ':', (answer) => {
-		if ( answer.match( /^y.*/ ) )
+		if ( answer.match( /^y.* / ) )
 			resolve( "y" );
 		else
 			resolve( "n" );
 	} ) );
+    */
+
+    return new Promise( resolve => { rl.once( 'line', function( answer )
+    {
+		if ( !answer.match( /^y.*/ ) )
+			resolve( "y" );
+		else
+			resolve( "n" );
+    } ) } );
+
 }
 
 async function deposit_out( )
@@ -580,6 +602,178 @@ function format( _amount )
 		return number + ".0" + decimal;
 	else
 		return number + "." + decimal;
+}
+
+function parseModifiers( _bits )
+{
+    var modifiers = {};
+    modifiers.l_control = ((_bits & 1) !== 0);
+    modifiers.l_shift = ((_bits & 2) !== 0);
+    modifiers.l_alt = ((_bits & 4) !== 0);
+    modifiers.l_meta = ((_bits & 8) !== 0);
+    modifiers.r_control = ((_bits & 16) !== 0);
+    modifiers.r_shift = ((_bits & 32) !== 0);
+    modifiers.r_alt = ((_bits & 64) !== 0);
+    modifiers.r_meta = ((_bits & 128) !== 0);
+    return modifiers;
+}
+
+function parseCharCodes( _charCode, _modifiers )
+{
+    var shift = ( _modifiers.l_shift || _modifiers.r_shift ) ? 1: 0;
+    switch ( _charCode )
+    {
+        // Note: codes are available here: http://www.usb.org/developers/hidpage/Hut1_12v2.pdf
+        //       See page 53
+        case 4: return['a', 'A'][shift];
+        case 5: return['b', 'B'][shift];
+        case 6: return['c', 'C'][shift];
+        case 7: return['d', 'D'][shift];
+        case 8: return['e', 'E'][shift];
+        case 9: return['f', 'F'][shift];
+        case 10: return['g', 'G'][shift];
+        case 11: return['h', 'H'][shift];
+        case 12: return['i', 'I'][shift];
+        case 13: return['j', 'J'][shift];
+        case 14: return['k', 'K'][shift];
+        case 15: return['l', 'L'][shift];
+        case 16: return['m', 'M'][shift];
+        case 17: return['n', 'N'][shift];
+        case 18: return['o', 'O'][shift];
+        case 19: return['p', 'P'][shift];
+        case 20: return['q', 'Q'][shift];
+        case 21: return['r', 'R'][shift];
+        case 22: return['s', 'S'][shift];
+        case 23: return['t', 'T'][shift];
+        case 24: return['u', 'U'][shift];
+        case 25: return['v', 'V'][shift];
+        case 26: return['w', 'W'][shift];
+        case 27: return['x', 'X'][shift];
+        case 28: return['y', 'Y'][shift];
+        case 29: return['z', 'Z'][shift];
+
+        case 30: return['1', '!'][shift];
+        case 31: return['2', '@'][shift];
+        case 32: return['3', '#'][shift];
+        case 33: return['4', '$'][shift];
+        case 34: return['5', '%'][shift];
+        case 35: return['6', '^'][shift];
+        case 36: return['7', '&'][shift];
+        case 37: return['8', '*'][shift];
+        case 38: return['9', '('][shift];
+        case 39: return['0', ')'][shift];
+
+        case 40: return['\n', '\n'][shift];
+        case 41: return['', ''][shift]; // escape
+        case 42: return['', ''][shift]; // delete
+        case 43: return['\t', '\t'][shift];
+        case 44: return[' ', ' '][shift];
+        case 45: return['-', '_'][shift];
+        case 46: return['=', '+'][shift];
+        case 47: return['[', '{'][shift];
+        case 48: return[']', '}'][shift];
+        case 49: return['\\', '|'][shift];
+        case 50: return['#', '~'][shift];
+        case 51: return[';', ':'][shift];
+        case 52: return['\'', '"'][shift];
+        case 53: return['`', '~'][shift];
+        case 54: return[',', '<'][shift];
+        case 55: return['.', '>'][shift];
+        case 56: return['/', '?'][shift];
+
+        case 57: return['', ''][shift]; // caps lock
+        case 58: return['', ''][shift]; // F1
+        case 59: return['', ''][shift]; // F2
+        case 60: return['', ''][shift]; // F3
+        case 61: return['', ''][shift]; // F4
+        case 62: return['', ''][shift]; // F5
+        case 63: return['', ''][shift]; // F6
+        case 64: return['', ''][shift]; // F7
+        case 65: return['', ''][shift]; // F8
+        case 66: return['', ''][shift]; // F9
+        case 67: return['', ''][shift]; // F10
+        case 68: return['', ''][shift]; // F11
+        case 69: return['', ''][shift]; // F12
+        case 70: return['', ''][shift]; // Print screen
+        case 71: return['', ''][shift]; // Scroll lock
+        case 72: return['', ''][shift]; // Pause
+        case 73: return['', ''][shift]; // Insert
+        case 74: return['', ''][shift]; // Home
+        case 75: return['', ''][shift]; // PageUp
+        case 76: return['', ''][shift]; // Delete forward
+        case 77: return['', ''][shift]; // End
+        case 78: return['', ''][shift]; // PageDown
+        case 79: return['', ''][shift]; // RightArrow
+        case 80: return['', ''][shift]; // LeftArrow
+        case 81: return['', ''][shift]; // DownArrow
+        case 82: return['', ''][shift]; // UpArrow
+
+        // Keypad
+        case 83: return['', ''][shift]; // NumLock / clear
+        case 84: return['/', '/'][shift]; //
+        case 85: return['*', '*'][shift]; //
+        case 86: return['-', '-'][shift]; //
+        case 87: return['+', '+'][shift]; //
+        case 88: return['\n', '\n'][shift]; //
+
+        // Keypad numbers
+        case 89: return['1', '1'][shift]; //
+        case 90: return['2', '2'][shift]; //
+        case 91: return['3', '3'][shift]; //
+        case 92: return['4', '4'][shift]; //
+        case 93: return['5', '5'][shift]; //
+        case 94: return['6', '6'][shift]; //
+        case 95: return['7', '7'][shift]; //
+        case 96: return['8', '8'][shift]; //
+        case 97: return['9', '9'][shift]; //
+        case 98: return['0', '0'][shift]; //
+        case 99: return['.', '.'][shift]; //
+        case 100: return['\\', '|'][shift]; // Non-US
+        case 101: return['', ''][shift]; // Application
+        case 102: return['', ''][shift]; // Power
+        case 103: return['=', '='][shift]; // Keypad =
+        case 104: return['', ''][shift]; // F13
+        case 105: return['', ''][shift]; // F14
+        case 106: return['', ''][shift]; // F15
+        case 107: return['', ''][shift]; // F16
+        case 108: return['', ''][shift]; // F17
+        case 109: return['', ''][shift]; // F18
+        case 110: return['', ''][shift]; // F19
+        case 111: return['', ''][shift]; // F20
+        case 112: return['', ''][shift]; // F21
+        case 113: return['', ''][shift]; // F22
+        case 114: return['', ''][shift]; // F23
+        case 115: return['', ''][shift]; // F24
+
+        // Misc actions omitted below...
+
+        case 133: return[',', ','][shift]; //
+        case 134: return['=', '='][shift]; //
+
+        case 158: return['\n', '\n'][shift]; //
+
+        case 182: return['(', '('][shift]; //
+        case 183: return[')', ')'][shift]; //
+        case 184: return['{', '{'][shift]; //
+        case 185: return['}', '}'][shift]; //
+        case 186: return['\t', '\t'][shift]; //
+        case 187: return['', ''][shift]; // Backspace
+        case 188: return['A', 'A'][shift]; //
+        case 189: return['B', 'B'][shift]; //
+        case 190: return['C', 'C'][shift]; //
+        case 191: return['D', 'D'][shift]; //
+        case 192: return['E', 'E'][shift]; //
+        case 193: return['F', 'F'][shift]; //
+
+        case 195: return['^', '^'][shift]; //
+        case 196: return['%', '%'][shift]; //
+        case 197: return['<', '<'][shift]; //
+        case 198: return['>', '>'][shift]; //
+        case 199: return['&', '&'][shift]; //
+
+        // There are many codes that are not currently handled here.
+        default: return ['', ''][shift];
+    }
 }
 
 // trap '' 2
