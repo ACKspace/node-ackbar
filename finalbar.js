@@ -6,8 +6,10 @@ const dat = require('./dat');
 
 const rl = readline.createInterface(
 {
+  completer: completer_user,
   input: process.stdin,
   output: process.stdout
+
 } );
 
 /*
@@ -20,6 +22,44 @@ const rl = readline.createInterface({
   //prompt: "C:\\WINDOWS\\SYSTEM> "
 });
 */
+
+function completer_product( line, callback )
+{
+    // NOTE: KEYBOARD is ignored
+    const commands = [ "QUIT", "CHECKOUT", "DEPOSIT", "ABORT" ];
+    const productlist = [...new Set(products.map( p => p.product ).sort())];
+
+    if ( !line.length )
+    {
+        //callback( null, [ commands, line ] );
+        callback( null, [ commands.concat( productlist ), line ] );
+    }
+    else
+    {
+        const hits = commands.concat( productlist ).filter((c) => c.toLowerCase().startsWith( line.toLowerCase() ) );
+        callback( null, [ hits, line ] );
+    }
+}
+
+function completer_user( line, callback )
+{
+    // NOTE: KEYBOARD is ignored
+    const commands = [ "QUIT" ];
+    const userlist = users.map( u => u.nick ).sort();
+
+    if ( !line.length )
+    {
+        //callback( null, [ commands, line ] );
+        callback( null, [ commands.concat( userlist ), line ] );
+    }
+    else
+    {
+        const hits = commands.concat( userlist ).filter((c) => c.startsWith( line ) );
+
+        callback( null, [ hits, line ] );
+    }
+}
+
 
 var serialPort = null;
 
@@ -64,6 +104,8 @@ else
 
 async function menu()
 {
+    rl.completer = completer_user; 
+
 	if ( temp.length )
 	{
 		cleanup();
@@ -133,6 +175,13 @@ async function menu()
 async function scanuser()
 {
 	print( "Scan your barcode or KEYBOARD to login manually.\n" );
+
+    var dummy = new Promise(function(resolve, reject)
+    {
+        setTimeout(resolve, 5000, 'quit');
+    });
+    scan = await Promise.race( [ dummy, keyboard_out() ] );
+    /*
 	if ( device )
 	{
 		scan = await scanner();
@@ -142,6 +191,7 @@ async function scanuser()
 		print( "Scanner not found, use keyboard!\n" );
 		scan = await keyboard_out();
 	}
+    */
 
 	if ( !scan.match( /^[A-Za-z0-9_\-]+$/ ) )
 	{
@@ -150,7 +200,7 @@ async function scanuser()
 	}
 
 	// 	/* Special barcodes */
-	switch ( scan )
+	switch ( scan.toUpperCase() )
 	{
 		case "QUIT":
 			cleanup();
@@ -212,15 +262,22 @@ async function scanuser()
 	if ( scan.match( /;/ ) ) { print( "Bad hacker! ';' is an illegal character!" ); return 1; }
 
 	/* Is this barcode in the user database? No? goto register */
-    if ( !users.find( u => { return u.barcode === scan } ) )
+    var data = users.find( u => { return u.barcode === scan } );
+
+    // NEW: find scan as nick
+    if ( !data )
+        data = users.find( u => { return u.nick === scan } );
+
+    if ( !data )
 	{
 		if ( await registeruser() )
 			return 1;
 	}
 
-	/* Take the data out of the userdatabase and split it up */
-    var data = users.find( u => { return u.barcode === scan } ); 
+    // Update tab completion
+    rl.completer = completer_product; 
 
+	/* Take the data out of the userdatabase and split it up */
 	if ( !data ) return 1;
 
 	code = data.barcode;
@@ -278,10 +335,10 @@ async function scanproduct()
 	else
 	{
 		print( "Scanner not found, use keyboard!\n" );
-		scan = await keyboard_out();
+		scan = await keyboard_product_out();
 	}
 
-	switch ( scan )
+	switch ( scan.toUpperCase() )
 	{
 		case "DEPOSIT":
 			await deposit();
@@ -311,11 +368,24 @@ async function scanproduct()
 	}
 
 // cat ./products.dat | grep $scan >> /dev/null || return 1
-    var data = products.find( p => { return p.barcode === scan } ); 
+
+    // TODO / NOTE: spaces are not allowed in keyboard entry
+    var data = products.find( p => { return p.barcode === scan } );
+    if ( !data )
+        data = products.filter( p => { return p.product.toLowerCase() === scan.toLowerCase() } );
+
+    if ( data.length > 1 && new Set(data.map( p => p.value )).size > 1 )
+    {
+        print( "Multiple prices for the same product name!\n" );
+        await sleep( 3 );
+        return 1;
+    }
+    data = data[ 0 ];
+
     if ( !data ) return 1;
 
 	code = data.barcode;
-	product = data.name;
+	product = data.product;
 	price = data.value;
 
 	//echo $product >> temp.dat
@@ -393,6 +463,25 @@ async function keyboard_out( )
 	*/
 	return new Promise( (resolve, reject) => rl.question( '.', (answer) => {
 		if ( !answer.match( /^[A-Za-z0-9_\-]+$/ ) )
+			resolve( "!" );
+		else
+			resolve( answer );
+	} ) );
+}
+
+
+async function keyboard_product_out( )
+{
+	/*
+	if [[ $input =~ ^[0-9a-zA-Z_-]*$ ]]
+	then
+		echo -n $input
+	else
+		echo -n !
+	fi
+	*/
+	return new Promise( (resolve, reject) => rl.question( '.', (answer) => {
+		if ( !answer.match( /^[A-Za-z0-9_\- ]+$/ ) )
 			resolve( "!" );
 		else
 			resolve( answer );
