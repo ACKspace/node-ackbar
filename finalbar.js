@@ -1,5 +1,5 @@
-//shitty lib const util = require( "util" );
-var figlet = require( "figlet" );
+const debug = true;
+const figlet = require( "figlet" );
 const readline = require( "readline" );
 const SerialPort = require('serialport');
 const dat = require('./dat');
@@ -12,13 +12,11 @@ const hid = new HID.HID( 5050, 24 );
 
 function completer_product( line, callback )
 {
-    // NOTE: KEYBOARD is ignored
     const commands = [ "QUIT", "CHECKOUT", "DEPOSIT", "ABORT" ];
     const productlist = [...new Set(products.map( p => p.product ).sort())];
 
     if ( !line.length )
     {
-        //callback( null, [ commands, line ] );
         callback( null, [ commands.concat( productlist ), line ] );
     }
     else
@@ -30,19 +28,19 @@ function completer_product( line, callback )
 
 function completer_user( line, callback )
 {
-    // NOTE: KEYBOARD is ignored
     const commands = [ "QUIT" ];
     const userlist = users.map( u => u.nick ).sort();
 
     if ( !line.length )
     {
-        //callback( null, [ commands, line ] );
-        callback( null, [ commands.concat( userlist ), line ] );
+        if ( debug )
+            callback( null, [ commands.concat( userlist ), line ] );
+        else
+            callback( null, [ commands, line ] );
     }
     else
     {
         const hits = commands.concat( userlist ).filter((c) => c.startsWith( line ) );
-
         callback( null, [ hits, line ] );
     }
 }
@@ -149,12 +147,6 @@ async function scanuser()
 {
 	print( "Scan your barcode or KEYBOARD to login manually.\n" );
 
-    /*
-    var dummy = new Promise(function(resolve, reject)
-    {
-        setTimeout(resolve, 5000, 'quit');
-    });
-    */
 	if ( hid )
 	{
 		//scan = await scanner();
@@ -162,9 +154,6 @@ async function scanuser()
 
         // Break the loop
         hid.removeAllListeners("data");
-
-        //rl.pause();
-        //rl.close();
 	}
 	else
 	{
@@ -310,14 +299,10 @@ async function scanproduct()
 {
 	if ( hid )
 	{
-		//scan = await scanner();
         scan = await Promise.race( [ scanner(), keyboard_product_out() ] );
 
         // Break the loop
         hid.removeAllListeners("data");
-
-        //rl.pause();
-        //rl.close();
 	}
 	else
 	{
@@ -355,20 +340,21 @@ async function scanproduct()
 			process.exit( 0 );
 	}
 
-// cat ./products.dat | grep $scan >> /dev/null || return 1
-
     // TODO / NOTE: spaces are not allowed in keyboard entry
     var data = products.find( p => { return p.barcode === scan } );
+
     if ( !data )
+    {
         data = products.filter( p => { return p.product.toLowerCase() === scan.toLowerCase() } );
 
-    if ( data.length > 1 && new Set(data.map( p => p.value )).size > 1 )
-    {
-        print( "Multiple prices for the same product name!\n" );
-        await sleep( 3 );
-        return 1;
+        if ( data.length > 1 && new Set(data.map( p => p.value )).size > 1 )
+        {
+            print( "Multiple prices for the same product name!\n" );
+            await sleep( 3 );
+            return 1;
+        }
+        data = data[ 0 ];
     }
-    data = data[ 0 ];
 
     if ( !data ) return 1;
 
@@ -430,6 +416,8 @@ async function scanner( )
     {
         if ( d.length )
         {
+            if ( debug )
+                console.log( d, parseCharCodes( d[2], parseModifiers( d[ 0 ] ) ) );
             keys.push( parseCharCodes( d[2], parseModifiers( d[ 0 ] ) ) );
         }
     } );
@@ -443,24 +431,6 @@ async function scanner( )
 
 async function keyboard_out( )
 {
-	/*
-	if [[ $input =~ ^[0-9a-zA-Z_-]*$ ]]
-	then
-		echo -n $input
-	else
-		echo -n !
-	fi
-	*/
-
-/*
-	return new Promise( (resolve, reject) => rl.question( '.', (answer) => {
-		if ( !answer.match( /^[A-Za-z0-9_\-]+$/ ) )
-			resolve( "!" );
-		else
-			resolve( answer );
-	} ) );
-*/
-
     return new Promise( resolve => { rl.once( 'line', function( answer )
     {
 		if ( !answer.match( /^[A-Za-z0-9_\-]+$/ ) )
@@ -473,22 +443,7 @@ async function keyboard_out( )
 
 async function keyboard_product_out( )
 {
-	/*
-	if [[ $input =~ ^[0-9a-zA-Z_-]*$ ]]
-	then
-		echo -n $input
-	else
-		echo -n !
-	fi
-	*/
-    /*
-	return new Promise( (resolve, reject) => rl.question( '.', (answer) => {
-		if ( !answer.match( /^[A-Za-z0-9_\- ]+$/ ) )
-			resolve( "!" );
-		else
-			resolve( answer );
-	} ) );
-    */
+    // NOTE: difference with this and keyboard_out is allowing a space
     return new Promise( resolve => { rl.once( 'line', function( answer )
     {
 		if ( !answer.match( /^[A-Za-z0-9_\- ]+$/ ) )
@@ -501,23 +456,6 @@ async function keyboard_product_out( )
 
 async function yesno_out( )
 {
-	/*
-	if [[ $input =~ ^y.* ]]
-	then
-		echo -n y
-	else
-		echo -n n
-	fi
-	*/
-    /*
-	return new Promise( (resolve, reject) => rl.question( ':', (answer) => {
-		if ( answer.match( /^y.* / ) )
-			resolve( "y" );
-		else
-			resolve( "n" );
-	} ) );
-    */
-
     return new Promise( resolve => { rl.once( 'line', function( answer )
     {
 		if ( !answer.match( /^y.*/ ) )
@@ -537,17 +475,6 @@ async function deposit_out( )
 	# comma+dot allowed (replaced by dot)
 	# 1 .1 1.1 1.11 1.111 ,1 1,1 1,11 1,111
 	#		endcash=$(bc -e $cash-$total -e quit)
-	read input
-	shopt -s nocasematch
-
-	if [[ $input =~ ^([0-9]+|[0-9]+[.,]|[0-9]+[.,][0-9]+)$ ]]
-	then
-		echo "${input/,/.} + 0.00" | bc
-		#echo 9.99
-	else
-		echo -n 0
-	fi
-	shopt -u nocasematch
 	*/
 	return new Promise( (resolve, reject) => rl.question( ':', (answer) => {
 		var result = answer.match( /^([0-9]+)?(?:[.,]([0-9]*))?$/ );
@@ -776,7 +703,13 @@ function parseCharCodes( _charCode, _modifiers )
     }
 }
 
-// trap '' 2
+/*
+rl.on('SIGINT', () => {
+  rl.question('Are you sure you want to exit? ', (answer) => {
+    if (answer.match(/^y(es)?$/i)) rl.pause();
+  });
+});
+*/
 
 (async () => {
 	while ( true )
