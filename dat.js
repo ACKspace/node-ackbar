@@ -4,12 +4,12 @@ const fs = require( "fs" );
 
 function format( _amount )
 {
-	var number = parseInt( _amount / 100 );
-	var decimal = ( _amount % 100 )
-	if ( decimal < 10 )
-		return number + ".0" + decimal;
-	else
-		return number + "." + decimal;
+       var number = parseInt( _amount / 100 );
+       var decimal = ( _amount % 100 )
+       if ( decimal < 10 )
+               return number + ".0" + decimal;
+       else
+               return number + "." + decimal;
 }
 
 // Read legacy dat file
@@ -59,5 +59,34 @@ function writeDat( _file, _data, _arrFields )
     fs.writeFileSync( _file, data );
 }
 
-module.exports = { readDat: readDat, writeDat: writeDat };
+function tempExists( _data )
+{
+    return fs.existsSync( "temp.dat" );
+}
+
+function writeTemp( _data )
+{
+    // Append _data to temp file
+    fs.writeFileSync( "temp.dat", _data, { flag: "a" } );
+}
+
+function appendTemp( _file )
+{
+    // Append the temp file contents to _file
+    fs.writeFileSync( _file, fs.readFileSync( "temp.dat" ), { flag: "a" } );
+}
+
+function deleteTemp( )
+{
+    fs.unlinkSync( "temp.dat" );
+}
+
+module.exports = {
+    readDat: readDat,
+    writeDat: writeDat,
+    tempExists: tempExists,
+    writeTemp: writeTemp,
+    appendTemp: appendTemp,
+    deleteTemp: deleteTemp
+};
 

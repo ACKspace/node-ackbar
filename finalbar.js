@@ -1,18 +1,41 @@
 const debug = true;
+const usePaypal = true;
+const useSerial = "/dev/ttyACM0"; // /dev/ttyUSB0, /dev/ttyACM0, /dev/cua00 or false
+
 const figlet = require( "figlet" );
 const readline = require( "readline" );
-const SerialPort = require('serialport');
-const dat = require('./dat');
-const HID = require('node-hid');
+const SerialPort = require( "serialport" );
+const dat = require( "./dat" );
+const countdown = require( "./countdown" );
 
-const rl = readline.createInterface( { input: process.stdin, output: process.stdout } );
+const HID = true ? require( "node-hid" ) : null;
+const rl = readline.createInterface( { input: process.stdin, output: process.stdout, prompt: "" } );
 
 // Connect to a USB barcode scanner with `xinput disable <id>` so it doesn't send text to stdin
-const hid = new HID.HID( 5050, 24 );
+var deviceInfo = HID.devices().find( d => d.vendorId===5050 && d.productId===24 );
+var hid = deviceInfo && new HID.HID( deviceInfo.path );
+
+const paypal = usePaypal ? require("./paypal-console") : null;
+if ( paypal )
+    paypal.listen();
+
+
+var serial = null;
+
+if ( useSerial )
+{
+    var Regex = require('@serialport/parser-regex');
+    var port = new SerialPort( useSerial, { baudRate: 9600 } );
+    serial = port.pipe( new Regex( { regex: /[\r\n]+/ } ) );
+}
+
+
 
 function completer_product( line, callback )
 {
     const commands = [ "QUIT", "CHECKOUT", "DEPOSIT", "ABORT" ];
+    if ( paypal )
+        commands.push( "PAYPAL" );
     const productlist = [...new Set(products.map( p => p.product ).sort())];
 
     if ( !line.length )
@@ -45,192 +68,192 @@ function completer_user( line, callback )
     }
 }
 
-
-var serialPort = null;
-
-/*
-serialPort = new SerialPort('/dev/ttyUSB0', {
-    baudRate: 9600
-});
-*/
-
 products = dat.readDat( "./products.dat", [ "barcode", "product", "value" ] );
 users = dat.readDat( "./users.dat", [ "barcode", "value", "nick" ] );
 
-var figlist = [ "banner","Big","Block","Bubble","Digital","Ivrit","Lean","Mini","Mnemonic","Script","Shadow","Slant","Small","Smscript","Smshadow","Smslant","Standard","Term"];
+var figlist = [ "Banner","Big","Block","Bubble","Digital","Ivrit","Lean","Mini","Mnemonic","Script","Shadow","Slant","Small"/*,"Smscript","Smshadow","Smslant"*/,"Standard","Term"];
 var log = [];
-
-var temp = [];
-
-var	total=0;
-var	cash=0;
-var	depo=0;
-var	moniez=0;
-var	user="";
+var    total=0;
+var    cash=0;
+var    depo=0;
+var    moniez=0;
+var    user="";
 var nick="";
-var	scan="";
-var	depo=0;
-var	restart=0;
-var	endcash=0;
+var    scan="";
+var    depo=0;
+var    restart=0;
+var    endcash=0;
 
 async function menu()
 {
     rl.completer = completer_user; 
 
-	if ( temp.length )
-	{
-		cleanup();
-		logo();
-		print( "someone already logged in, please wait" );
-	}
-	while ( temp.length )
-	{
-		print( "." );
-		await sleep( 1 );
-	}
+    if ( dat.tempExists() )
+    {
+        cleanup();
+        logo();
+        print( "someone already logged in, please wait" );
+    }
+    while ( dat.tempExists() )
+    {
+        print( "." );
+        await sleep( 1 );
+    }
 
-	cleanup();
-	logo();
+    cleanup();
+    logo();
 
-	var ret = await scanuser();
-	while ( ret !== 0 )
-	{
-		print( "!" );
-		cleanup();
-		logo();
+    var ret = await scanuser();
+    while ( ret !== 0 )
+    {
+        print( "!" );
+        cleanup();
+        logo();
 
-		ret = await scanuser();
-	}
+        ret = await scanuser();
+    }
 
-	if ( temp.length )
-	{
-		cleanup();
-		logo();
-		print( "someone already logged in, please wait.." );
-		await sleep( 5 );
-		return 0
-	}
+    if ( dat.tempExists() )
+    {
+        cleanup();
+        logo();
+        print( "someone already logged in, please wait.." );
+        await sleep( 5 );
+        return 0
+    }
 
-	/* User logged in, log result (which is also a lock file */
-	logg();
+    /* User logged in, log result (which is also a lock file */
+    logg();
 
-	print( "You can now scan products or charge up your account.\n" );
-	var ret = await scanproduct();
-	while ( ret !== 0 )
-	{
-		ret = await scanproduct();
-	}
+    print( "You can now scan products or charge up your account.\n" );
 
-	if ( restart !== 1 )
-	{
-		print( "Checking out..\n" );
-		endcash = cash - total;
+    var ret = await scanproduct();
+    while ( ret !== 0 )
+    {
+        ret = await scanproduct();
+    }
 
-		if ( endcash < 0 )
-		{
-			print( "Not enough money!\n" );
-		}
-		else
-		{
-			vervang( user, endcash );
-			print( "Succes! You now have " + format( endcash ) + " on your account, logging out..\n" );
-			//echo "Spent: "$total >> temp.dat
-			//cat temp.dat >> log.dat
-		}
-	}
-	temp.length = 0;
-	await sleep( 3 );
-	return 0;
+    if ( restart !== 1 )
+    {
+        print( "Checking out..\n" );
+        endcash = cash - total;
+
+        if ( endcash < 0 )
+        {
+            print( "Not enough money!\n" );
+        }
+        else
+        {
+            vervang( user, endcash );
+            print( "Succes! You now have " + format( endcash ) + " on your account, logging out..\n" );
+            dat.writeTemp( "Spent: " + format( total ) + "\n" );
+            dat.appendTemp( "log.dat" );
+        }
+    }
+
+    dat.deleteTemp();
+    await sleep( 3 );
+    return 0;
 }
 
 async function scanuser()
 {
-	print( "Scan your barcode or KEYBOARD to login manually.\n" );
+    print( "Scan your barcode or KEYBOARD to login manually.\n" );
 
-	if ( hid )
-	{
-		//scan = await scanner();
-        scan = await Promise.race( [ scanner(), keyboard_out() ] );
+    var listeners = [ keyboard_out() ];
 
-        // Break the loop
+    if ( hid )
+        listeners.push( scanner() );
+
+    if ( serial )
+        listeners.push( serialScanner() );
+
+    if ( listeners.length === 1 )
+        print( "Scanner not found, use keyboard!\n" );
+
+    scan = await Promise.race( listeners );
+
+    // Break the loop
+    if ( hid )
         hid.removeAllListeners("data");
-	}
-	else
-	{
-		print( "Scanner not found, use keyboard!\n" );
-		scan = await keyboard_out();
-	}
 
-	if ( !scan.match( /^[A-Za-z0-9_\-]+$/ ) )
-	{
-		print( "Illegal character detected!\n" );
-		return 1;
-	}
+    if ( !scan.match( /^[A-Za-z0-9_\-]+$/ ) )
+    {
+        print( "Illegal character detected!\n" );
+        return 1;
+    }
 
-	// 	/* Special barcodes */
-	switch ( scan.toUpperCase() )
-	{
-		case "QUIT":
-			cleanup();
+    //     /* Special barcodes */
+    switch ( scan.toUpperCase() )
+    {
+        case "QUIT":
+            cleanup();
             rl.close();
-			process.exit( 0 );
+            process.exit( 0 );
 
-		case "CHECKOUT":
-			print( "Can't check out, not logged in.\n" );
-			return 1;
+        case "CHECKOUT":
+            print( "Can't check out, not logged in.\n" );
+            return 1;
 
-		case "DEPOSIT":
-			print( "Login to deposit cash.\n" );
-			return 1;
+        case "DEPOSIT":
+            print( "Login to deposit cash.\n" );
+            return 1;
 
-		case "ABORT":
-			print( "Nothing to abort.\n" );
-			return 1;
+        case "ABORT":
+            print( "Nothing to abort.\n" );
+            return 1;
 
-		case "KEYBOARD":
-			print( "Type in your nickname:\n" );
-			nick = await keyboard_out();
-			if ( nick === "!" || nick === "ABORT" || nick === "CHECKOUT" || nick === "DEPOSIT" || nick === "KEYBOARD" || nick === "QUIT" )
-			{
-				print( "Only a-Z, 0-9, - and _ allowed sorry.\n" );
-				return 1;
-			}
+        case "KEYBOARD":
+            print( "Type in your nickname:\n" );
+            nick = await keyboard_out();
+            if ( nick === "!" || nick === "ABORT" || nick === "CHECKOUT" || nick === "DEPOSIT" || nick === "KEYBOARD" || nick === "QUIT" )
+            {
+                print( "Only a-Z, 0-9, - and _ allowed sorry.\n" );
+                return 1;
+            }
 
-			/* Disallow */
-			if ( !nick ) return 1;
-			/* [ $(echo $nick | grep :) ] && echo Foei && return 1 */
+            /* Disallow */
+            if ( !nick ) return 1;
+            /* [ $(echo $nick | grep :) ] && echo Foei && return 1 */
             if ( products.find( p => { return p.product.toLowerCase().match( nick.toLowerCase() ) } ) ) { print( "Name already exists as product.\n" ); return 1; }
 
             var data = users.find( u => { return u.nick === nick } ); 
             if ( !data )
-			{
-				var ret = await registeruser();
-				if ( ret === 1 ) return 2;
+            {
+                var ret = await registeruser();
+                if ( ret === 1 ) return 2;
                 data = users.find( u => { return u.nick === nick } ); 
-			}
+            }
 
-			if ( !data ) return 1;
+            if ( !data ) return 1;
 
-			code = data.barcode;
-			cash = data.value;
-			user = data.nick;
+            code = data.barcode;
+            cash = data.value;
+            user = data.nick;
 
-			return 0;
-	} // end case
+            return 0;
 
-	/* Is this barcode in the product database? */
+        case "PAYPAL":
+            if ( paypal )
+            {
+                print( "Not supported.\n" );
+                return 1;
+            }
+    } // end case
+
+    /* Is this barcode in the product database? */
     if ( products.find( p => { return p.barcode === scan } ) )
-	{
-		print( "Product.. FAAL\n" );
-		return 1;
-	}
+    {
+        print( "Product.. FAAL\n" );
+        return 1;
+    }
 
-	/* The hack check */
-	if ( scan.match( /:/ ) ) { print( "Bad hacker! ':' is an illegal character!" ); return 1; }
-	if ( scan.match( /\&/ ) ) { print( "Bad hacker! '&' is an illegal character!" ); return 1; }
-	if ( scan.match( /;/ ) ) { print( "Bad hacker! ';' is an illegal character!" ); return 1; }
+    /* The hack check */
+    if ( scan.match( /:/ ) ) { print( "Bad hacker! ':' is an illegal character!" ); return 1; }
+    if ( scan.match( /\&/ ) ) { print( "Bad hacker! '&' is an illegal character!" ); return 1; }
+    if ( scan.match( /;/ ) ) { print( "Bad hacker! ';' is an illegal character!" ); return 1; }
 
-	/* Is this barcode in the user database? No? goto register */
+    /* Is this barcode in the user database? No? goto register */
     var data = users.find( u => { return u.barcode === scan } );
 
     // NEW: find scan as nick
@@ -238,107 +261,141 @@ async function scanuser()
         data = users.find( u => { return u.nick === scan } );
 
     if ( !data )
-	{
-		if ( await registeruser() )
-			return 1;
-	}
+    {
+        if ( await registeruser() )
+            return 1;
+    }
 
     // Update tab completion
     rl.completer = completer_product; 
 
-	/* Take the data out of the userdatabase and split it up */
-	if ( !data ) return 1;
+    /* Take the data out of the userdatabase and split it up */
+    if ( !data ) return 1;
 
-	code = data.barcode;
-	cash = data.value;
-	user = data.nick;
+    code = data.barcode;
+    cash = data.value;
+    user = data.nick;
 
-	return 0;
+    return 0;
 }
 
-function logg( )
+function logg()
 {
-	temp.push( "" );
-	temp.push( "--" + user + "--" );
-// 	date >> temp.dat
-	print( "Hello " + user + "!\n" );
-	print( "You currently have " + format( cash ) + "\n" );
-	return 0;
+    dat.writeTemp( "\n" );
+    dat.writeTemp( "--" + user + "--\n" );
+    dat.writeTemp( new Date().toString() + "\n" );
+
+    print( "Hello " + user + "!\n" );
+    print( "You currently have " + format( cash ) + "\n" );
+    return 0;
 }
 
 async function registeruser()
 {
-	if ( nick )
-	{
-		print( "Do you want to register this nick? (y/n)\n" );
-		answer = await yesno_out();
-	}
-	else
-	{
-		print( "Do you want to register this barcode? (y/n)\n" );
-		answer = await yesno_out();
-		nick=scan;
-	}
+    if ( nick )
+    {
+        print( "Do you want to register this nick? (y/n)\n" );
+        answer = await yesno_out();
+    }
+    else
+    {
+        print( "Do you want to register this barcode? (y/n)\n" );
+        answer = await yesno_out();
+        nick=scan;
+    }
 
-	if ( answer !== "y" )
-	{
-		print( "Canceling registration\n" );
-		return 1;
-	}
+    if ( answer !== "y" )
+    {
+        print( "Canceling registration\n" );
+        return 1;
+    }
 
-	if ( answer === "y" )
-	{
-		//echo $scan":0.00:"$nick >> users.dat
-		print( "Registered!\n" );
-	}
+    if ( answer === "y" )
+    {
+        //echo $scan":0.00:"$nick >> users.dat
+        print( "Registered!\n" );
+    }
 
-	return 0;
+    return 0;
 }
 
 async function scanproduct()
 {
-	if ( hid )
-	{
-        scan = await Promise.race( [ scanner(), keyboard_product_out() ] );
+    var listeners = [ keyboard_product_out() ];
 
-        // Break the loop
+    if ( hid )
+        listeners.push( scanner() );
+
+    if ( serial )
+        listeners.push( serialScanner() );
+
+    if ( listeners.length === 1 )
+        print( "Scanner not found, use keyboard!\n" );
+
+    scan = await Promise.race( listeners );
+
+    // Break the loop
+    if ( hid )
         hid.removeAllListeners("data");
-	}
-	else
-	{
-		print( "Scanner not found, use keyboard!\n" );
-		scan = await keyboard_product_out();
-	}
 
-	switch ( scan.toUpperCase() )
-	{
-		case "DEPOSIT":
-			await deposit();
-			return 1;
+    switch ( scan.toUpperCase() )
+    {
+        case "DEPOSIT":
+            await deposit();
+            return 1;
 
-		case "CHECKOUT":
-		if ( depo != 0 )
-		{
-			//echo "Deposited: "$depo >> temp.dat
-			print( "Deposited: " + format( depo ) + " Total:" + format( depo + cash ) + "\n" );
-			cash = cash + depo;
-			vervang( user, cash );
-		}
-		return 0;
+        case "CHECKOUT":
+            if ( depo != 0 )
+            {
+                dat.writeTemp( "Deposited: " + format( depo ) + "\n" );
+                print( "Deposited: " + format( depo ) + " Total:" + format( depo + cash ) + "\n" );
+                cash = cash + depo;
+                vervang( user, cash );
+            }
+            return 0;
 
-		case "ABORT":
-			print( "ABORTED\n" );
-			await sleep( 2 );
-			restart = 1;
-			return 0;
+        case "ABORT":
+            print( "ABORTED\n" );
+            await sleep( 2 );
+            restart = 1;
+            return 0;
 
-		case "QUIT":
-			print( "QUIT\n" );
-			cleanup();
-			temp.length = 0;
+        case "QUIT":
+            print( "QUIT\n" );
+            cleanup();
+            dat.deleteTemp();
             rl.close();
-			process.exit( 0 );
-	}
+            process.exit( 0 );
+
+        case "PAYPAL":
+            if ( paypal )
+            {
+                // Generate QR code
+                var invoice = await paypal.qrInvoice( format( total ), user, "http://pay.ack.space:3000/" );
+                print( "Scan the QR code to pay with paypal\n" );
+                process.stdout.write( "\u001b[s" );
+                print( "\n" );
+                invoice.qr.forEach( print );
+
+                // Wait for payment
+                var hash = await Promise.race( [ paypal.payment( invoice.hash ), yesno_out(), countdown.start( 120, "Timeout: " ) ] );
+
+                countdown.stop();
+                if ( !hash || hash === "y" || hash === "n" )
+                {
+                    process.stdout.write( "\u001b[0J" );
+                    print( "PayPal canceled\n" );
+                    //paypal.abort( invoice.hash )
+                    return 1;
+                }
+
+                if ( hash === invoice.hash )
+                    print( "SUCCESS!\n" );
+                await sleep( 2 );
+                restart = 1;
+                return 0;
+            }
+    }
 
     // TODO / NOTE: spaces are not allowed in keyboard entry
     var data = products.find( p => { return p.barcode === scan } );
@@ -358,53 +415,52 @@ async function scanproduct()
 
     if ( !data ) return 1;
 
-	code = data.barcode;
-	product = data.product;
-	price = data.value;
+    code = data.barcode;
+    product = data.product;
+    price = data.value;
 
-	//echo $product >> temp.dat
-	total = total + price;
-//         derp=${total%.*}
-	print( format( price ) + " " + product + "\n" );
-	print( "The total amounts adds up to " + format( total ) + "\n" );
-	return 2; /* NOT FINISHED */
+    dat.writeTemp( product + "\n" );
+
+    total = total + price;
+    print( format( price ) + " " + product + "\n" );
+    print( "The total amounts adds up to " + format( total ) + "\n" );
+    return 2; /* NOT FINISHED */
 }
 
 async function deposit()
 {
-	print( "How much money do you want to deposit? (e.g. 1.50)\n" );
-	moniez = await deposit_out();
-	depo = depo + moniez;
-	print( format( depo ) + "\n" );
-	return 0;
+    print( "How much money do you want to deposit? (e.g. 1.50)\n" );
+    moniez = await deposit_out();
+    depo = depo + moniez;
+    print( format( depo ) + "\n" );
+    return 0;
 }
 
 function logo()
 {
-	console.clear();
-	print( "\033[33m" );
-	var font = figlist[ ( Math.random() * figlist.length ) | 0 ];
+    console.clear();
+    print( "\u001b[33m" );
+    var font = figlist[ ( Math.random() * figlist.length ) | 0 ];
 
-	if ( false )
-		print( figlet.textSync('ACKbar', { font: font } ) );
-	else
-		print( "ACKbar" );
-	print( "\n" );
-	print( "\033[37m" );
+    if ( true )
+        print( figlet.textSync('ACKbar', { font: font } ) );
+    else
+        print( "ACKbar" );
+    print( "\n" );
+    print( "\u001b[37m" );
 }
 
 function cleanup()
 {
-	/* echo "" > temp.dat */
-	total=0;
-	cash=0;
-	depo=0;
-	moniez=0;
-	user="";
-	nick="";
-	scan="";
-	restart=0;
-	endcash=0;
+    total=0;
+    cash=0;
+    depo=0;
+    moniez=0;
+    user="";
+    nick="";
+    scan="";
+    restart=0;
+    endcash=0;
 }
 
 async function scanner( )
@@ -416,8 +472,6 @@ async function scanner( )
     {
         if ( d.length )
         {
-            if ( debug )
-                console.log( d, parseCharCodes( d[2], parseModifiers( d[ 0 ] ) ) );
             keys.push( parseCharCodes( d[2], parseModifiers( d[ 0 ] ) ) );
         }
     } );
@@ -429,14 +483,19 @@ async function scanner( )
     return keys.join("").replace( "\n", "" );
 }
 
+async function serialScanner( )
+{
+    return new Promise( (resolve, reject) => serial.once( "data", resolve ) );
+}
+
 async function keyboard_out( )
 {
     return new Promise( resolve => { rl.once( 'line', function( answer )
     {
-		if ( !answer.match( /^[A-Za-z0-9_\-]+$/ ) )
-			resolve( "!" );
-		else
-			resolve( answer );
+        if ( !answer.match( /^[A-Za-z0-9_\-]+$/ ) )
+            resolve( "!" );
+        else
+            resolve( answer );
     } ) } );
 }
 
@@ -446,10 +505,10 @@ async function keyboard_product_out( )
     // NOTE: difference with this and keyboard_out is allowing a space
     return new Promise( resolve => { rl.once( 'line', function( answer )
     {
-		if ( !answer.match( /^[A-Za-z0-9_\- ]+$/ ) )
-			resolve( "!" );
-		else
-			resolve( answer );
+        if ( !answer.match( /^[A-Za-z0-9_\- ]+$/ ) )
+            resolve( "!" );
+        else
+            resolve( answer );
     } ) } );
 
 }
@@ -458,77 +517,77 @@ async function yesno_out( )
 {
     return new Promise( resolve => { rl.once( 'line', function( answer )
     {
-		if ( !answer.match( /^y.*/ ) )
-			resolve( "y" );
-		else
-			resolve( "n" );
+        if ( !answer.match( /^y.*/ ) )
+            resolve( "y" );
+        else
+            resolve( "n" );
     } ) } );
 
 }
 
 async function deposit_out( )
 {
-	/*
-	# no negative numbers
-	# output n.nn or 0 @ error
-	# multiple digits behind dot
-	# comma+dot allowed (replaced by dot)
-	# 1 .1 1.1 1.11 1.111 ,1 1,1 1,11 1,111
-	#		endcash=$(bc -e $cash-$total -e quit)
-	*/
-	return new Promise( (resolve, reject) => rl.question( ':', (answer) => {
-		var result = answer.match( /^([0-9]+)?(?:[.,]([0-9]*))?$/ );
-		if ( result )
-		{
-			var euros = ( result[1] | 0 );
-			var cents = result[2];
+    /*
+    # no negative numbers
+    # output n.nn or 0 @ error
+    # multiple digits behind dot
+    # comma+dot allowed (replaced by dot)
+    # 1 .1 1.1 1.11 1.111 ,1 1,1 1,11 1,111
+    #        endcash=$(bc -e $cash-$total -e quit)
+    */
+    return new Promise( (resolve, reject) => rl.question( ':', (answer) => {
+        var result = answer.match( /^([0-9]+)?(?:[.,]([0-9]*))?$/ );
+        if ( result )
+        {
+            var euros = ( result[1] | 0 );
+            var cents = result[2];
 
-			// Adjust single digit cents, i.e. .2
-			if ( cents && cents.length < 2 )
-				cents = 10 * cents;
-			else
-				cents = ( cents | 0 );
+            // Adjust single digit cents, i.e. .2
+            if ( cents && cents.length < 2 )
+                cents = 10 * cents;
+            else
+                cents = ( cents | 0 );
 
-			resolve( 100 * euros + cents );
-		}
-		else
-		{
-			resolve( 0 );
-		}
-	} ) );
+            resolve( 100 * euros + cents );
+        }
+        else
+        {
+            resolve( 0 );
+        }
+    } ) );
 }
 
 function vervang( _user, _bedrag )
 {
-	// find user: set amount
+    // find user: set amount
     var user = users.find( u => { return u.nick === _user } );
     if ( !user )
-		return false;
+        return false;
 
-	user.value = _bedrag;
+    user.value = _bedrag;
     dat.writeDat( "./users.dat", users, [ "barcode", "value", "nick" ] );
-	return true;
+    return true;
 }
 
 async function sleep( _s )
 {
-	return new Promise( (resolve, reject) => setTimeout(resolve, _s * 1000 ) );
+    return new Promise( (resolve, reject) => setTimeout(resolve, _s * 1000 ) );
 }
 
 function print( _text )
 {
-	process.stdout.write( _text );
-	return _text;
+    process.stdout.write( _text );
+    return _text;
 }
 
 function format( _amount )
 {
-	var number = parseInt( _amount / 100 );
-	var decimal = ( _amount % 100 )
-	if ( decimal < 10 )
-		return number + ".0" + decimal;
-	else
-		return number + "." + decimal;
+    var number = parseInt( _amount / 100 );
+    var decimal = ( _amount % 100 )
+    if ( decimal < 10 )
+        return number + ".0" + decimal;
+    else
+        return number + "." + decimal;
 }
 
 function parseModifiers( _bits )
@@ -712,6 +771,6 @@ rl.on('SIGINT', () => {
 */
 
 (async () => {
-	while ( true )
-		await menu();
+    while ( true )
+        await menu();
 })();
