@@ -173,9 +173,14 @@ async function scanuser()
 
     scan = await Promise.race( listeners );
 
-    // Break the loop
+    // Cleanup listeners
+    rl.removeAllListeners("line");
+
     if ( hid )
         hid.removeAllListeners("data");
+
+    if ( serial )
+        serial.removeAllListeners("data");
 
     if ( !scan.match( /^[A-Za-z0-9_\-]+$/ ) )
     {
@@ -334,9 +339,14 @@ async function scanproduct()
 
     scan = await Promise.race( listeners );
 
-    // Break the loop
+    // Cleanup listeners
+    rl.removeAllListeners("line");
+
     if ( hid )
         hid.removeAllListeners("data");
+
+    if ( serial )
+        serial.removeAllListeners("data");
 
     switch ( scan.toUpperCase() )
     {
